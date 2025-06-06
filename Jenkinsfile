@@ -3,10 +3,12 @@ pipeline {
 
     parameters {
         choice(name: 'DEPLOY_ENV', choices: ['staging', 'production'], description: 'Choose deployment environment')
+        choice(name: 'VERSION_BUMP', choices: ['none', 'patch', 'minor', 'major'], description: 'Choose version bump type')
     }
 
     environment {
         IMAGE_NAME = 'ikenna2025/flask-app'
+        VERSION_FILE = 'VERSION'
         IMAGE_TAG = "build-${env.BUILD_NUMBER}"
         SLACK_COLOR_SUCCESS = '#00FF00'
         SLACK_COLOR_FAIL = '#FF0000'
@@ -17,6 +19,45 @@ pipeline {
     }
 
     stages {
+        stage('Version Management') {
+            steps {
+                script {
+                    slackSend(color: SLACK_COLOR_DEFAULT, message: "📝 *Version Management* started.")
+                    
+                    // Read current version
+                    def currentVersion = readFile(VERSION_FILE).trim()
+                    def (major, minor, patch) = currentVersion.tokenize('.')
+                    
+                    // Bump version based on parameter
+                    switch(params.VERSION_BUMP) {
+                        case 'major':
+                            major = (major.toInteger() + 1).toString()
+                            minor = '0'
+                            patch = '0'
+                            break
+                        case 'minor':
+                            minor = (minor.toInteger() + 1).toString()
+                            patch = '0'
+                            break
+                        case 'patch':
+                            patch = (patch.toInteger() + 1).toString()
+                            break
+                    }
+                    
+                    // Create new version
+                    def newVersion = "${major}.${minor}.${patch}"
+                    
+                    // Update version file
+                    writeFile file: VERSION_FILE, text: newVersion
+                    
+                    // Set version for this build
+                    env.IMAGE_TAG = newVersion
+                    
+                    slackSend(color: SLACK_COLOR_SUCCESS, message: "✅ *Version bumped* from ${currentVersion} to ${newVersion}")
+                }
+            }
+        }
+
         stage('Checkout') {
             steps {
                 script {
@@ -34,7 +75,7 @@ pipeline {
                 script {
                     slackSend(color: SLACK_COLOR_DEFAULT, message: "🏗️ *Build* started.")
                     if (isUnix()) {
-                        sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ."
+                        sh "docker build -t ${IMAGE_NAME}:${env.IMAGE_TAG} ."
                     } else {
                         bat "docker build -t %IMAGE_NAME%:%IMAGE_TAG% ."
                     }
@@ -51,7 +92,7 @@ pipeline {
                         if (isUnix()) {
                             sh """
                                 echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                                docker push ${IMAGE_NAME}:${IMAGE_TAG}
+                                docker push ${IMAGE_NAME}:${env.IMAGE_TAG}
                                 docker logout
                             """
                         } else {
@@ -62,7 +103,7 @@ pipeline {
                             """
                         }
                     }
-                    slackSend(color: SLACK_COLOR_SUCCESS, message: "✅ *Image pushed to DockerHub* as `${IMAGE_NAME}:${IMAGE_TAG}`.")
+                    slackSend(color: SLACK_COLOR_SUCCESS, message: "✅ *Image pushed to DockerHub* as `${IMAGE_NAME}:${env.IMAGE_TAG}`.")
                 }
             }
         }
@@ -72,7 +113,7 @@ pipeline {
                 script {
                     slackSend(color: SLACK_COLOR_DEFAULT, message: "🧪 *Test* started.")
                     if (isUnix()) {
-                        sh "docker run --rm ${IMAGE_NAME}:${IMAGE_TAG} echo 'Container test successful'"
+                        sh "docker run --rm ${IMAGE_NAME}:${env.IMAGE_TAG} echo 'Container test successful'"
                     } else {
                         bat "docker run --rm %IMAGE_NAME%:%IMAGE_TAG% echo Container test successful"
                     }
@@ -101,7 +142,7 @@ pipeline {
                             sh """
                                 docker stop ${containerName} || true
                                 docker rm ${containerName} || true
-                                docker run -d -p ${port} --name ${containerName} ${IMAGE_NAME}:${IMAGE_TAG}
+                                docker run -d -p ${port} --name ${containerName} ${IMAGE_NAME}:${env.IMAGE_TAG}
                             """
                         } else {
                             bat """
