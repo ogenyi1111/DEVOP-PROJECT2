@@ -21,7 +21,7 @@ pipeline {
                 script {
                     slackSend(color: SLACK_COLOR_DEFAULT, message: "📦 *Checkout* started.")
                 }
-                git branch: 'main', url: 'https://github.com/ogenyi1111/Devop-Project-main.git'
+                git branch: 'main', url: 'https://github.com/ogenyi1111/DEVOP-PROJECT2.git'
                 script {
                     slackSend(color: SLACK_COLOR_SUCCESS, message: "✅ *Checkout* completed.")
                 }
