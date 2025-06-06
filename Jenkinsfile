@@ -13,8 +13,7 @@ pipeline {
         SLACK_COLOR_SUCCESS = '#00FF00'
         SLACK_COLOR_FAIL = '#FF0000'
         SLACK_COLOR_DEFAULT = '#439FE0'
-        STAGING_CONTAINER = 'flask_app_staging'
-        PROD_CONTAINER = 'flask_app_production'
+        CONFIG_DIR = 'config'
         PREVIOUS_IMAGE = ''
     }
 
@@ -54,6 +53,28 @@ pipeline {
                     env.IMAGE_TAG = newVersion
                     
                     slackSend(color: SLACK_COLOR_SUCCESS, message: "✅ *Version bumped* from ${currentVersion} to ${newVersion}")
+                }
+            }
+        }
+
+        stage('Load Environment Config') {
+            steps {
+                script {
+                    slackSend(color: SLACK_COLOR_DEFAULT, message: "🔧 *Loading ${params.DEPLOY_ENV} configuration*")
+                    
+                    // Load environment-specific configuration
+                    def envFile = "${CONFIG_DIR}/${params.DEPLOY_ENV}.env"
+                    def envConfig = readFile(envFile).trim()
+                    
+                    // Parse environment variables
+                    envConfig.split('\n').each { line ->
+                        if (line && !line.startsWith('#')) {
+                            def (key, value) = line.split('=')
+                            env[key.trim()] = value.trim()
+                        }
+                    }
+                    
+                    slackSend(color: SLACK_COLOR_SUCCESS, message: "✅ *Configuration loaded* for ${params.DEPLOY_ENV}")
                 }
             }
         }
@@ -127,56 +148,89 @@ pipeline {
                 script {
                     slackSend(color: SLACK_COLOR_DEFAULT, message: "🚀 *Deploy to ${params.DEPLOY_ENV}* started.")
 
-                    def containerName = (params.DEPLOY_ENV == 'production') ? PROD_CONTAINER : STAGING_CONTAINER
-                    def port = (params.DEPLOY_ENV == 'production') ? '5000:5000' : '5001:5000'
-
                     // Store the current image for rollback
                     if (isUnix()) {
-                        PREVIOUS_IMAGE = sh(script: "docker inspect --format='{{.Config.Image}}' ${containerName} || echo ''", returnStdout: true).trim()
+                        PREVIOUS_IMAGE = sh(script: "docker inspect --format='{{.Config.Image}}' ${env.CONTAINER_NAME} || echo ''", returnStdout: true).trim()
                     } else {
-                        PREVIOUS_IMAGE = bat(script: "docker inspect --format='{{.Config.Image}}' %${containerName}% || echo ''", returnStdout: true).trim()
+                        PREVIOUS_IMAGE = bat(script: "docker inspect --format='{{.Config.Image}}' %${env.CONTAINER_NAME}% || echo ''", returnStdout: true).trim()
                     }
 
                     try {
-                        if (isUnix()) {
-                            sh """
-                                docker stop ${containerName} || true
-                                docker rm ${containerName} || true
-                                docker run -d -p ${port} --name ${containerName} ${IMAGE_NAME}:${env.IMAGE_TAG}
-                            """
-                        } else {
-                            bat """
-                                docker stop %${containerName}% || exit 0
-                                docker rm %${containerName}% || exit 0
-                                docker run -d -p ${port} --name %${containerName}% %IMAGE_NAME%:%IMAGE_TAG%
-                            """
-                        }
-
-                        // Health check
-                        sleep(10) // Wait for container to start
-                        if (isUnix()) {
-                            sh "curl -f http://localhost:${port.split(':')[0]} || exit 1"
-                        } else {
-                            bat "curl -f http://localhost:${port.split(':')[0]} || exit 1"
-                        }
-
-                        slackSend(color: SLACK_COLOR_SUCCESS, message: "✅ *Deployment to ${params.DEPLOY_ENV}* completed.")
-                    } catch (Exception e) {
-                        // Rollback to previous version
-                        if (PREVIOUS_IMAGE) {
-                            slackSend(color: SLACK_COLOR_DEFAULT, message: "🔄 *Rolling back to previous version*")
+                        // Deploy multiple replicas based on environment config
+                        for (int i = 0; i < env.REPLICAS.toInteger(); i++) {
+                            def containerName = "${env.CONTAINER_NAME}-${i}"
+                            def port = "${env.PORT.toInteger() + i}:5000"
+                            
                             if (isUnix()) {
                                 sh """
                                     docker stop ${containerName} || true
                                     docker rm ${containerName} || true
-                                    docker run -d -p ${port} --name ${containerName} ${PREVIOUS_IMAGE}
+                                    docker run -d \
+                                        --name ${containerName} \
+                                        -p ${port} \
+                                        --cpus=${env.RESOURCES_CPU} \
+                                        --memory=${env.RESOURCES_MEMORY} \
+                                        ${IMAGE_NAME}:${env.IMAGE_TAG}
                                 """
                             } else {
                                 bat """
                                     docker stop %${containerName}% || exit 0
                                     docker rm %${containerName}% || exit 0
-                                    docker run -d -p ${port} --name %${containerName}% %PREVIOUS_IMAGE%
+                                    docker run -d ^
+                                        --name %${containerName}% ^
+                                        -p ${port} ^
+                                        --cpus=%${env.RESOURCES_CPU}% ^
+                                        --memory=%${env.RESOURCES_MEMORY}% ^
+                                        %IMAGE_NAME%:%IMAGE_TAG%
                                 """
+                            }
+                        }
+
+                        // Health check for all replicas
+                        sleep(10) // Wait for containers to start
+                        for (int i = 0; i < env.REPLICAS.toInteger(); i++) {
+                            def port = env.PORT.toInteger() + i
+                            if (isUnix()) {
+                                sh "curl -f http://localhost:${port} || exit 1"
+                            } else {
+                                bat "curl -f http://localhost:${port} || exit 1"
+                            }
+                        }
+
+                        slackSend(color: SLACK_COLOR_SUCCESS, message: "✅ *Deployment to ${params.DEPLOY_ENV}* completed with ${env.REPLICAS} replicas.")
+                    } catch (Exception e) {
+                        // Rollback to previous version
+                        if (PREVIOUS_IMAGE) {
+                            slackSend(color: SLACK_COLOR_DEFAULT, message: "🔄 *Rolling back to previous version*")
+                            
+                            // Rollback all replicas
+                            for (int i = 0; i < env.REPLICAS.toInteger(); i++) {
+                                def containerName = "${env.CONTAINER_NAME}-${i}"
+                                def port = "${env.PORT.toInteger() + i}:5000"
+                                
+                                if (isUnix()) {
+                                    sh """
+                                        docker stop ${containerName} || true
+                                        docker rm ${containerName} || true
+                                        docker run -d \
+                                            --name ${containerName} \
+                                            -p ${port} \
+                                            --cpus=${env.RESOURCES_CPU} \
+                                            --memory=${env.RESOURCES_MEMORY} \
+                                            ${PREVIOUS_IMAGE}
+                                    """
+                                } else {
+                                    bat """
+                                        docker stop %${containerName}% || exit 0
+                                        docker rm %${containerName}% || exit 0
+                                        docker run -d ^
+                                            --name %${containerName}% ^
+                                            -p ${port} ^
+                                            --cpus=%${env.RESOURCES_CPU}% ^
+                                            --memory=%${env.RESOURCES_MEMORY}% ^
+                                            %PREVIOUS_IMAGE%
+                                    """
+                                }
                             }
                             slackSend(color: SLACK_COLOR_SUCCESS, message: "✅ *Rollback completed* to previous version.")
                         }
