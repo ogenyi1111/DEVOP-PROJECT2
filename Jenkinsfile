@@ -13,6 +13,7 @@ pipeline {
         SLACK_COLOR_DEFAULT = '#439FE0'
         STAGING_CONTAINER = 'flask_app_staging'
         PROD_CONTAINER = 'flask_app_production'
+        PREVIOUS_IMAGE = ''
     }
 
     stages {
@@ -88,21 +89,58 @@ pipeline {
                     def containerName = (params.DEPLOY_ENV == 'production') ? PROD_CONTAINER : STAGING_CONTAINER
                     def port = (params.DEPLOY_ENV == 'production') ? '5000:5000' : '5001:5000'
 
+                    // Store the current image for rollback
                     if (isUnix()) {
-                        sh """
-                            docker stop ${containerName} || true
-                            docker rm ${containerName} || true
-                            docker run -d -p ${port} --name ${containerName} ${IMAGE_NAME}:${IMAGE_TAG}
-                        """
+                        PREVIOUS_IMAGE = sh(script: "docker inspect --format='{{.Config.Image}}' ${containerName} || echo ''", returnStdout: true).trim()
                     } else {
-                        bat """
-                            docker stop %${containerName}% || exit 0
-                            docker rm %${containerName}% || exit 0
-                            docker run -d -p ${port} --name %${containerName}% %IMAGE_NAME%:%IMAGE_TAG%
-                        """
+                        PREVIOUS_IMAGE = bat(script: "docker inspect --format='{{.Config.Image}}' %${containerName}% || echo ''", returnStdout: true).trim()
                     }
 
-                    slackSend(color: SLACK_COLOR_SUCCESS, message: "✅ *Deployment to ${params.DEPLOY_ENV}* completed.")
+                    try {
+                        if (isUnix()) {
+                            sh """
+                                docker stop ${containerName} || true
+                                docker rm ${containerName} || true
+                                docker run -d -p ${port} --name ${containerName} ${IMAGE_NAME}:${IMAGE_TAG}
+                            """
+                        } else {
+                            bat """
+                                docker stop %${containerName}% || exit 0
+                                docker rm %${containerName}% || exit 0
+                                docker run -d -p ${port} --name %${containerName}% %IMAGE_NAME%:%IMAGE_TAG%
+                            """
+                        }
+
+                        // Health check
+                        sleep(10) // Wait for container to start
+                        if (isUnix()) {
+                            sh "curl -f http://localhost:${port.split(':')[0]} || exit 1"
+                        } else {
+                            bat "curl -f http://localhost:${port.split(':')[0]} || exit 1"
+                        }
+
+                        slackSend(color: SLACK_COLOR_SUCCESS, message: "✅ *Deployment to ${params.DEPLOY_ENV}* completed.")
+                    } catch (Exception e) {
+                        // Rollback to previous version
+                        if (PREVIOUS_IMAGE) {
+                            slackSend(color: SLACK_COLOR_DEFAULT, message: "🔄 *Rolling back to previous version*")
+                            if (isUnix()) {
+                                sh """
+                                    docker stop ${containerName} || true
+                                    docker rm ${containerName} || true
+                                    docker run -d -p ${port} --name ${containerName} ${PREVIOUS_IMAGE}
+                                """
+                            } else {
+                                bat """
+                                    docker stop %${containerName}% || exit 0
+                                    docker rm %${containerName}% || exit 0
+                                    docker run -d -p ${port} --name %${containerName}% %PREVIOUS_IMAGE%
+                                """
+                            }
+                            slackSend(color: SLACK_COLOR_SUCCESS, message: "✅ *Rollback completed* to previous version.")
+                        }
+                        throw e
+                    }
                 }
             }
         }
