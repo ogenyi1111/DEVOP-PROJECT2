@@ -19,5 +19,5 @@ COPY static/ ./static/
 # Expose port
 EXPOSE 5000
 
-# Run the application with Gunicorn
-CMD ["gunicorn", "app:app", "-b", "0.0.0.0:5000"]
+# Run the application with Gunicorn with more workers and timeout settings
+CMD ["gunicorn", "app:app", "-b", "0.0.0.0:5000", "--workers", "4", "--timeout", "120", "--keep-alive", "5"]
