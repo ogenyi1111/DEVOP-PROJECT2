@@ -7,7 +7,7 @@ pipeline {
     }
 
     environment {
-        IMAGE_NAME = 'your-dockerhub-username/flask-app'
+        IMAGE_NAME = 'ikenna2025/flask-app'
         IMAGE_TAG = "build-${env.BUILD_NUMBER}"
         SLACK_COLOR_SUCCESS = '#00FF00'
         SLACK_COLOR_FAIL = '#FF0000'
@@ -130,7 +130,7 @@ pipeline {
     }
 
     environment {
-        IMAGE_NAME = 'your-dockerhub-username/flask-app'
+        IMAGE_NAME = 'ikenna2025/flask-app'
         IMAGE_TAG = "build-${env.BUILD_NUMBER}"
         SLACK_COLOR_SUCCESS = '#00FF00'
         SLACK_COLOR_FAIL = '#FF0000'
