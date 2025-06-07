@@ -9,13 +9,11 @@ pipeline {
     environment {
         DOCKER_IMAGE = 'ikennaogenyi/flask-app'
         DOCKER_TAG = "${BUILD_NUMBER}"
-        DOCKER_CREDENTIALS = credentials('docker-hub-credentials')
         ANSIBLE_INVENTORY = 'ansible/inventory/hosts'
         ANSIBLE_VAULT_PASSWORD = credentials('ansible-vault-password')
         SLACK_COLOR_SUCCESS = 'good'
         SLACK_COLOR_FAIL = 'danger'
         SLACK_COLOR_DEFAULT = '#FFFF00'
-        PATH_SEP = "${isUnix() ? '/' : '\\'}"
     }
 
     stages {
@@ -96,20 +94,24 @@ pipeline {
         stage('Push') {
             steps {
                 script {
-                    if (isUnix()) {
-                        sh '''
-                            echo ${DOCKER_CREDENTIALS_PSW} | docker login -u ${DOCKER_CREDENTIALS_USR} --password-stdin
-                            docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
-                            docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_IMAGE}:latest
-                            docker push ${DOCKER_IMAGE}:latest
-                        '''
-                    } else {
-                        bat '''
-                            echo %DOCKER_CREDENTIALS_PSW% | docker login -u %DOCKER_CREDENTIALS_USR% --password-stdin
-                            docker push %DOCKER_IMAGE%:%DOCKER_TAG%
-                            docker tag %DOCKER_IMAGE%:%DOCKER_TAG% %DOCKER_IMAGE%:latest
-                            docker push %DOCKER_IMAGE%:latest
-                        '''
+                    withCredentials([usernamePassword(credentialsId: 'docker-hub-credentials', 
+                                                    usernameVariable: 'DOCKER_USERNAME', 
+                                                    passwordVariable: 'DOCKER_PASSWORD')]) {
+                        if (isUnix()) {
+                            sh '''
+                                echo ${DOCKER_PASSWORD} | docker login -u ${DOCKER_USERNAME} --password-stdin
+                                docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
+                                docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_IMAGE}:latest
+                                docker push ${DOCKER_IMAGE}:latest
+                            '''
+                        } else {
+                            bat '''
+                                echo %DOCKER_PASSWORD% | docker login -u %DOCKER_USERNAME% --password-stdin
+                                docker push %DOCKER_IMAGE%:%DOCKER_TAG%
+                                docker tag %DOCKER_IMAGE%:%DOCKER_TAG% %DOCKER_IMAGE%:latest
+                                docker push %DOCKER_IMAGE%:latest
+                            '''
+                        }
                     }
                 }
             }
