@@ -7,17 +7,19 @@
         }
 
         environment {
-            DOCKER_IMAGE = 'flask-app'
-            DOCKER_TAG = readFile('VERSION').trim()
-            SONAR_HOST_URL = 'http://localhost:9000'
-            // Ensure you have a 'sonar-token' credential of type 'Secret text' in Jenkins
-            SONAR_TOKEN = credentials('sonar-token')
+            DOCKER_IMAGE = 'ikennaogenyi/flask-app'
+            DOCKER_TAG = "${BUILD_NUMBER}"
+            DOCKER_CREDENTIALS = credentials('docker-hub-credentials')
+            ANSIBLE_INVENTORY = 'ansible/inventory/hosts'
+            ANSIBLE_VAULT_PASSWORD = credentials('ansible-vault-password')
             SLACK_COLOR_SUCCESS = 'good'
             SLACK_COLOR_FAIL = 'danger'
             SLACK_COLOR_DEFAULT = '#FFFF00'
             // Add DOCKER_USERNAME here if it's dynamic, otherwise, it comes from credentials
             // PREVIOUS_IMAGE will be set in the Deploy stage
             PREVIOUS_IMAGE = '' // Initialize as empty string
+            // Platform-specific path separator
+            PATH_SEP = isUnix() ? '/' : '\\'
         }
 
         stages {
@@ -74,78 +76,74 @@
                 }
             }
 
-            stage('SonarQube Analysis') {
-                steps {
-                    withSonarQubeEnv('SonarQube') {
-                        // Use bat for Windows and full path to sonar-scanner.bat
-                        bat '\"C:\\\\SonarQube\\\\sonar-scanner\\\\bin\\\\sonar-scanner.bat\" -Dsonar.projectKey=flask-app -Dsonar.sources=. -Dsonar.host.url=${SONAR_HOST_URL} -Dsonar.login=${SONAR_TOKEN} -Dsonar.python.version=3 -Dsonar.python.coverage.reportPaths=coverage.xml -Dsonar.python.xunit.reportPath=test-results.xml'
-                    }
-                }
-            }
-
-            stage('Quality Gate') {
-                steps {
-                    timeout(time: 1, unit: 'HOURS') {
-                        waitForQualityGate abortPipeline: true
-                    }
-                }
-            }
-
-            stage('Build Image') {
+            stage('Build') {
                 steps {
                     script {
-                        slackSend(color: env.SLACK_COLOR_DEFAULT, message: "🏗️ *Build* started.")
-                        // Use bat for Windows
-                        bat "docker build -t ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} ."
-                        slackSend(color: env.SLACK_COLOR_SUCCESS, message: "✅ *Build* completed.")
-                    }
-                }
-            }
-
-            stage('Push to DockerHub') {
-                steps {
-                    script {
-                        slackSend(color: env.SLACK_COLOR_DEFAULT, message: "📤 *Push* started.")
-                        withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials', passwordVariable: 'DOCKER_PASSWORD', usernameVariable: 'DOCKER_USERNAME')]) {
-                            // Use bat for Windows
-                            bat "docker login -u %DOCKER_USERNAME% -p %DOCKER_PASSWORD%"
-                            bat "docker tag ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} ${env.DOCKER_USERNAME}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG}"
-                            bat "docker push ${env.DOCKER_USERNAME}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG}"
+                        // Use platform-agnostic command
+                        if (isUnix()) {
+                            sh 'docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .'
+                        } else {
+                            bat 'docker build -t %DOCKER_IMAGE%:%DOCKER_TAG% .'
                         }
-                        slackSend(color: env.SLACK_COLOR_SUCCESS, message: "✅ *Push* completed.")
                     }
                 }
             }
 
-            stage('Test Container') {
+            stage('Test') {
                 steps {
                     script {
-                        slackSend(color: env.SLACK_COLOR_DEFAULT, message: "🧪 *Test* started.")
-                        // Use bat for Windows
-                        bat "docker run --rm ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} python -m pytest --junitxml=test-results.xml --cov=. --cov-report=xml:coverage.xml"
-                        slackSend(color: env.SLACK_COLOR_SUCCESS, message: "✅ *Test* completed.")
+                        if (isUnix()) {
+                            sh '''
+                                docker run --rm ${DOCKER_IMAGE}:${DOCKER_TAG} python -m pytest tests/
+                            '''
+                        } else {
+                            bat '''
+                                docker run --rm %DOCKER_IMAGE%:%DOCKER_TAG% python -m pytest tests/
+                            '''
+                        }
                     }
                 }
             }
 
-            stage('Deploy Container') {
+            stage('Push') {
                 steps {
                     script {
-                        slackSend(color: env.SLACK_COLOR_DEFAULT, message: "🚀 *Deploy* started.")
-                        try {
-                            // Use bat for Windows
-                            bat "docker stop flask-app || true"
-                            bat "docker rm flask-app || true"
-                            bat "docker run -d -p 5000:5000 --name flask-app ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}"
-                            slackSend(color: env.SLACK_COLOR_SUCCESS, message: "✅ *Deployment* successful to *${params.DEPLOY_ENV}*!")
-                        } catch (Exception e) {
-                            echo "Deployment failed, attempting rollback to previous image..."
-                            slackSend(color: env.SLACK_COLOR_FAIL, message: "❌ Deployment to *${params.DEPLOY_ENV}* failed. Attempting rollback...")
-                            // Use bat for Windows
-                            bat "docker stop flask-app || true"
-                            bat "docker rm flask-app || true"
-                            bat "docker run -d -p 5000:5000 --name flask-app ${env.DOCKER_IMAGE}:${env.PREVIOUS_IMAGE}"
-                            error "Deployment failed and rolled back."
+                        if (isUnix()) {
+                            sh '''
+                                echo ${DOCKER_CREDENTIALS_PSW} | docker login -u ${DOCKER_CREDENTIALS_USR} --password-stdin
+                                docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
+                                docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_IMAGE}:latest
+                                docker push ${DOCKER_IMAGE}:latest
+                            '''
+                        } else {
+                            bat '''
+                                echo %DOCKER_CREDENTIALS_PSW% | docker login -u %DOCKER_CREDENTIALS_USR% --password-stdin
+                                docker push %DOCKER_IMAGE%:%DOCKER_TAG%
+                                docker tag %DOCKER_IMAGE%:%DOCKER_TAG% %DOCKER_IMAGE%:latest
+                                docker push %DOCKER_IMAGE%:latest
+                            '''
+                        }
+                    }
+                }
+            }
+
+            stage('Deploy') {
+                steps {
+                    script {
+                        if (isUnix()) {
+                            sh '''
+                                cd ansible
+                                ansible-playbook -i ${ANSIBLE_INVENTORY} playbooks/deploy.yml \
+                                    --vault-password-file <(echo ${ANSIBLE_VAULT_PASSWORD}) \
+                                    -e "docker_image=${DOCKER_IMAGE}:${DOCKER_TAG}"
+                            '''
+                        } else {
+                            bat '''
+                                cd ansible
+                                ansible-playbook -i %ANSIBLE_INVENTORY% playbooks/deploy.yml ^
+                                    --vault-password-file <(echo %ANSIBLE_VAULT_PASSWORD%) ^
+                                    -e "docker_image=%DOCKER_IMAGE%:%DOCKER_TAG%"
+                            '''
                         }
                     }
                 }
@@ -154,15 +152,26 @@
 
         post {
             always {
-                slackSend(color: '#FFFF00', message: "🟡 Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' finished. Check: ${env.BUILD_URL}")
+                script {
+                    if (isUnix()) {
+                        sh 'docker logout'
+                    } else {
+                        bat 'docker logout'
+                    }
+                    cleanWs()
+                    slackSend(color: '#FFFF00', message: "🟡 Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' finished. Check: ${env.BUILD_URL}")
+                }
             }
             success {
+                echo 'Pipeline completed successfully!'
                 // Correctly referencing environment variables with env.
                 slackSend(color: env.SLACK_COLOR_SUCCESS, message: "✅ Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' succeeded on *${params.DEPLOY_ENV}*!")
             }
             failure {
+                echo 'Pipeline failed!'
                 // Correctly referencing environment variables with env.
                 slackSend(color: env.SLACK_COLOR_FAIL, message: "❌ Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' failed during *${params.DEPLOY_ENV}* deployment!")
             }
         }
     }
+}
