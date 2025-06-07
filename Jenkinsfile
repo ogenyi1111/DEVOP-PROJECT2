@@ -10,9 +10,9 @@ pipeline {
         IMAGE_NAME = 'ikenna2025/flask-app'
         VERSION_FILE = 'VERSION'
         IMAGE_TAG = "build-${env.BUILD_NUMBER}"
-        SLACK_COLOR_SUCCESS = '#00FF00'
-        SLACK_COLOR_FAIL = '#FF0000'
-        SLACK_COLOR_DEFAULT = '#439FE0'
+        SLACK_COLOR_SUCCESS = 'good'
+        SLACK_COLOR_FAIL = 'danger'
+        SLACK_COLOR_DEFAULT = '#FFFF00'
         CONFIG_DIR = 'config'
         PREVIOUS_IMAGE = ''
         DOCKER_IMAGE = 'flask-app'
