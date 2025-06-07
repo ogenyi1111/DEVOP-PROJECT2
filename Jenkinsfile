@@ -1,6 +1,11 @@
     pipeline {
         agent any
 
+        parameters {
+            choice(name: 'DEPLOY_ENV', choices: ['staging', 'production'], description: 'Choose deployment environment')
+            choice(name: 'VERSION_BUMP', choices: ['none', 'patch', 'minor', 'major'], description: 'Choose version bump type')
+        }
+
         environment {
             DOCKER_IMAGE = 'flask-app'
             DOCKER_TAG = readFile('VERSION').trim()
@@ -10,6 +15,9 @@
             SLACK_COLOR_SUCCESS = 'good'
             SLACK_COLOR_FAIL = 'danger'
             SLACK_COLOR_DEFAULT = '#FFFF00'
+            // Add DOCKER_USERNAME here if it's dynamic, otherwise, it comes from credentials
+            // PREVIOUS_IMAGE will be set in the Deploy stage
+            PREVIOUS_IMAGE = '' // Initialize as empty string
         }
 
         stages {
@@ -57,6 +65,7 @@
             stage('Load Environment Config') {
                 steps {
                     script {
+                        // This will now correctly use params.DEPLOY_ENV to load config/staging.yml or config/production.yml
                         def config = readYaml file: "config/${params.DEPLOY_ENV}.yml"
                         env.FLASK_ENV = config.flask_env
                         env.FLASK_DEBUG = config.flask_debug
@@ -155,6 +164,5 @@
                 // Correctly referencing environment variables with env.
                 slackSend(color: env.SLACK_COLOR_FAIL, message: "❌ Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' failed during *${params.DEPLOY_ENV}* deployment!")
             }
-            // Add other post conditions if needed
         }
     }
