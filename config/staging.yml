@@ -1,0 +1,2 @@
+flask_env: "staging"
+flask_debug: true 
