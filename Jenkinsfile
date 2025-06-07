@@ -15,7 +15,7 @@ pipeline {
         SLACK_COLOR_SUCCESS = 'good'
         SLACK_COLOR_FAIL = 'danger'
         SLACK_COLOR_DEFAULT = '#FFFF00'
-        PATH_SEP = isUnix() ? '/' : '\\'
+        PATH_SEP = "${isUnix() ? '/' : '\\'}"
     }
 
     stages {
