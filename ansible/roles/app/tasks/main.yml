@@ -1,0 +1,34 @@
+---
+- name: Copy application files
+  copy:
+    src: "{{ item }}"
+    dest: /opt/flask-app/
+  with_items:
+    - app.py
+    - requirements.txt
+    - Dockerfile
+    - VERSION
+
+- name: Build Docker image
+  docker_image:
+    name: flask-app
+    build:
+      path: /opt/flask-app
+    source: build
+    state: present
+
+- name: Create Docker network
+  docker_network:
+    name: flask-network
+    state: present
+
+- name: Run Docker container
+  docker_container:
+    name: flask-app
+    image: flask-app
+    state: started
+    ports:
+      - "5000:5000"
+    networks:
+      - name: flask-network
+    restart_policy: always 

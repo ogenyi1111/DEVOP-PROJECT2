@@ -1,0 +1,8 @@
+---
+- name: Configure application servers
+  hosts: all
+  become: yes
+  roles:
+    - common
+    - docker
+    - app 

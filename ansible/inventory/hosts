@@ -1,0 +1,8 @@
+[staging]
+staging_server ansible_host=localhost ansible_connection=local
+
+[production]
+production_server ansible_host=localhost ansible_connection=local
+
+[all:vars]
+ansible_python_interpreter=/usr/bin/python3 

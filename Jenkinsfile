@@ -15,6 +15,10 @@ pipeline {
         SLACK_COLOR_DEFAULT = '#439FE0'
         CONFIG_DIR = 'config'
         PREVIOUS_IMAGE = ''
+        DOCKER_IMAGE = 'flask-app'
+        DOCKER_TAG = readFile('VERSION').trim()
+        SONAR_HOST_URL = 'http://localhost:9000'
+        SONAR_TOKEN = credentials('sonar-token')
     }
 
     stages {
@@ -91,6 +95,31 @@ pipeline {
             }
         }
 
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('SonarQube') {
+                    sh '''
+                        sonar-scanner \
+                        -Dsonar.projectKey=flask-app \
+                        -Dsonar.sources=. \
+                        -Dsonar.host.url=${SONAR_HOST_URL} \
+                        -Dsonar.login=${SONAR_TOKEN} \
+                        -Dsonar.python.version=3 \
+                        -Dsonar.python.coverage.reportPaths=coverage.xml \
+                        -Dsonar.python.xunit.reportPath=test-results.xml
+                    '''
+                }
+            }
+        }
+        
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 1, unit: 'HOURS') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
         stage('Build Image') {
             steps {
                 script {
@@ -134,9 +163,9 @@ pipeline {
                 script {
                     slackSend(color: SLACK_COLOR_DEFAULT, message: "🧪 *Test* started.")
                     if (isUnix()) {
-                        sh "docker run --rm ${IMAGE_NAME}:${env.IMAGE_TAG} echo 'Container test successful'"
+                        sh "docker run --rm ${IMAGE_NAME}:${env.IMAGE_TAG} python -m pytest --junitxml=test-results.xml --cov=. --cov-report=xml:coverage.xml"
                     } else {
-                        bat "docker run --rm %IMAGE_NAME%:%IMAGE_TAG% echo Container test successful"
+                        bat "docker run --rm %IMAGE_NAME%:%IMAGE_TAG% python -m pytest --junitxml=test-results.xml --cov=. --cov-report=xml:coverage.xml"
                     }
                     slackSend(color: SLACK_COLOR_SUCCESS, message: "✅ *Test* completed.")
                 }
