@@ -15,7 +15,6 @@ pipeline {
         SLACK_COLOR_SUCCESS = 'good'
         SLACK_COLOR_FAIL = 'danger'
         SLACK_COLOR_DEFAULT = '#FFFF00'
-        PREVIOUS_IMAGE = ''
         PATH_SEP = isUnix() ? '/' : '\\'
     }
 
@@ -31,27 +30,25 @@ pipeline {
                 script {
                     def currentVersion = readFile('VERSION').trim()
                     echo "Current version: ${currentVersion}"
-                    def versionParts = currentVersion.split('\\.')
-                    def major = versionParts[0].toInteger()
-                    def minor = versionParts[1].toInteger()
-                    def patch = versionParts[2].toInteger()
+                    def (major, minor, patch) = currentVersion.tokenize('.').collect { it.toInteger() }
 
                     switch ("${params.VERSION_BUMP}") {
                         case 'patch':
-                            patch += 1
+                            patch++
                             break
                         case 'minor':
-                            minor += 1
+                            minor++
                             patch = 0
                             break
                         case 'major':
-                            major += 1
+                            major++
                             minor = 0
                             patch = 0
                             break
                         case 'none':
                             break
                     }
+
                     def newVersion = "${major}.${minor}.${patch}"
                     writeFile file: 'VERSION', text: newVersion
                     env.DOCKER_TAG = newVersion
@@ -88,13 +85,9 @@ pipeline {
             steps {
                 script {
                     if (isUnix()) {
-                        sh '''
-                            docker run --rm ${DOCKER_IMAGE}:${DOCKER_TAG} python -m pytest tests/
-                        '''
+                        sh 'docker run --rm ${DOCKER_IMAGE}:${DOCKER_TAG} python -m pytest tests/'
                     } else {
-                        bat '''
-                            docker run --rm %DOCKER_IMAGE%:%DOCKER_TAG% python -m pytest tests/
-                        '''
+                        bat 'docker run --rm %DOCKER_IMAGE%:%DOCKER_TAG% python -m pytest tests/'
                     }
                 }
             }
