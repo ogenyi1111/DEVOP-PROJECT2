@@ -10,7 +10,6 @@ pipeline {
         DOCKER_IMAGE = 'ikennaogenyi/flask-app'
         DOCKER_TAG = "${BUILD_NUMBER}"
         ANSIBLE_INVENTORY = 'ansible/inventory/hosts'
-        ANSIBLE_VAULT_PASSWORD = credentials('ansible-vault-password')
         SLACK_COLOR_SUCCESS = 'good'
         SLACK_COLOR_FAIL = 'danger'
         SLACK_COLOR_DEFAULT = '#FFFF00'
@@ -120,20 +119,22 @@ pipeline {
         stage('Deploy') {
             steps {
                 script {
-                    if (isUnix()) {
-                        sh '''
-                            cd ansible
-                            ansible-playbook -i ${ANSIBLE_INVENTORY} playbooks/deploy.yml \
-                                --vault-password-file <(echo ${ANSIBLE_VAULT_PASSWORD}) \
-                                -e "docker_image=${DOCKER_IMAGE}:${DOCKER_TAG}"
-                        '''
-                    } else {
-                        bat '''
-                            cd ansible
-                            ansible-playbook -i %ANSIBLE_INVENTORY% playbooks/deploy.yml ^
-                                --vault-password-file <(echo %ANSIBLE_VAULT_PASSWORD%) ^
-                                -e "docker_image=%DOCKER_IMAGE%:%DOCKER_TAG%"
-                        '''
+                    withCredentials([string(credentialsId: 'ansible-vault-password', variable: 'ANSIBLE_VAULT_PASSWORD')]) {
+                        if (isUnix()) {
+                            sh '''
+                                cd ansible
+                                ansible-playbook -i ${ANSIBLE_INVENTORY} playbooks/deploy.yml \
+                                    --vault-password-file <(echo ${ANSIBLE_VAULT_PASSWORD}) \
+                                    -e "docker_image=${DOCKER_IMAGE}:${DOCKER_TAG}"
+                            '''
+                        } else {
+                            bat '''
+                                cd ansible
+                                ansible-playbook -i %ANSIBLE_INVENTORY% playbooks/deploy.yml ^
+                                    --vault-password-file <(echo %ANSIBLE_VAULT_PASSWORD%) ^
+                                    -e "docker_image=%DOCKER_IMAGE%:%DOCKER_TAG%"
+                            '''
+                        }
                     }
                 }
             }
@@ -142,14 +143,16 @@ pipeline {
 
     post {
         always {
-            script {
-                if (isUnix()) {
-                    sh 'docker logout'
-                } else {
-                    bat 'docker logout'
+            node {
+                script {
+                    if (isUnix()) {
+                        sh 'docker logout'
+                    } else {
+                        bat 'docker logout'
+                    }
+                    cleanWs()
+                    slackSend(color: '#FFFF00', message: "🟡 Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' finished. Check: ${env.BUILD_URL}")
                 }
-                cleanWs()
-                slackSend(color: '#FFFF00', message: "🟡 Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' finished. Check: ${env.BUILD_URL}")
             }
         }
         success {
